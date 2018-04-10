@@ -1,0 +1,106 @@
+Here, I'm gone make online campaign attribution model for a free2play game in R
+Data set contains the steps as well path ranking wise channel steps : click here for dataset : https://docs.google.com/spreadsheets/d/1oUALuCGgf-k6P9Ku8p_w_5Gwm4yOlF4aaaTql_JQN9k/edit#gid=1132021618
+Thing to solve is probability across every steps to understand the attribution behaviour in R.. Please, refer the below R code with annotation
+
+Link of R file : https://drive.google.com/file/d/0B2brjLHn5vY0YkNyUG90TUxQS3IzZzk3ei1MSzJiM0YzY2VF/view?usp=sharing
+#------R code start--------#
+
+rm(list=ls())
+library(HMM)
+library(readxl)
+library(dplyr)
+library(permute)
+
+## Read input data ##
+print("Please make sure chains begin in 6th column of the sheet")
+print("Reading from sheet 2. If you want to read from another sheet, please check line 8 of the code")
+data <- read_excel("HMM data.xlsx",sheet=2)
+names(data) <- make.names(names(data))
+totalTraffic <- sum(data$Traffic)
+
+#Calculate the actual traffic distribution
+data$Traffic.dis <- sapply(data$Traffic,FUN=function(x){x/totalTraffic})
+temp <- is.na(data[,6:dim(data)[2]])
+
+#Find out lengths of each chain
+pathLength <- (rowSums(!temp) +rowSums(temp))-rowSums(temp)
+states <- c("D1","D2","D3","O1","O2","O3","F1","F2","I1","T1",paste0("A",seq(1:8),sep=""),"G1","G2","X")
+
+
+#Generate a dataset with all possible combination of paths
+pathprobs <- expand.grid(states,states,stringsAsFactors = FALSE)
+names(pathprobs) <- c("Current","Next")
+pathprobs <- arrange(pathprobs,Current,Next)
+pathprobs[,3:(dim(data)[1]+2)] <- 0
+
+#For each chain perform calculations as mentioned below
+for(j in 1:dim(data)[1]){
+  currentPath <- data[j,6:(pathLength[j]+5)]
+  myData <- data.frame()
+  
+  #Find the path combinations present in the given chain
+  for (i in 1:(pathLength[j]-1)){
+    myData[i,1] <- currentPath[i]  
+    myData[i,2] <- currentPath[i+1]  
+  }
+  names(myData) <- c("Current","Next")
+  myData$prob <- 1
+  vec <- unique(myData$Current)
+  
+  #Find probability distribution for each combination
+  for(i in vec){
+    myData[myData$Current==i,3] <-myData[myData$Current==i,3]/sum(myData$Current==i)
+  }
+  myData <- myData %>% group_by(Current,Next) %>% summarise(prob = sum(prob)) %>% ungroup()
+  myData <- myData[!duplicated(myData[,1:2]),] 
+  
+  #Remove duplicated rows
+  for(i in 1:dim(myData)[1]){
+    a <- (pathprobs[,1]==as.character(myData[i,1]) & pathprobs[,2]==as.character(myData[i,2]))
+    pathprobs[a,j+2] <- as.numeric(myData[i,3])
+  }
+}
+names(pathprobs) <- c("Current","Next",paste("P",seq(1:dim(data)[1]),sep=""))
+pathprobs$Global.traffic <- 0
+
+#Calculate the probability of purchase using traffic data 
+for(i in 1:dim(pathprobs)[1]){
+  index <- as.numeric(ceiling(pathprobs[i,3:(dim(data)[1]+2)]))
+  total <- sum(data$Traffic * index )
+  index <- which(index==1)
+  if(total!=0){
+  pathprobs$Global.traffic[i] <- sum(data$Traffic[index]*pathprobs[i,(index+2)])/total
+  }
+  else{
+    pathprobs$Global.traffic[i] <- 0
+  }
+}
+pathprobs$Global.conv <- 0
+
+#Calculate the probability of purchase using conversion rate
+data$converted  <-  data$Conversion.rate*data$Traffic
+for(i in 1:dim(pathprobs)[1]){
+  index <- as.numeric(ceiling(pathprobs[i,3:(dim(data)[1]+2)]))
+  total <- sum(data$converted * index )
+  index <- which(index==1)
+  if(total!=0){
+    pathprobs$Global.conv[i] <- sum(data$converted[index]*pathprobs[i,(index+2)])/total
+  }
+  else{
+    pathprobs$Global.conv[i] <- 0
+  }
+}
+titles <- c("prob of purchase at traffic distribution","prob of purchase at conversion rate distribution")
+names(pathprobs)[c(dim(pathprobs)[2]-1,dim(pathprobs)[2])] <- titles
+result <- pathprobs[,c(1,2,dim(pathprobs)[2]-1,dim(pathprobs)[2])]
+
+#Export the results
+write.csv(result,"result.csv",row.names = FALSE)
+
+#------R code end--------#
+
+Result & Analysis file : https://docs.google.com/spreadsheets/d/1HcPRxSTFgnYYmtM0Vb2zIj6EfizeaUf70L2Ho7xkPxM/edit#gid=1043603864
+
+Now, decision making process - as per the probability distribution at Traffic & Conversion rate level, marketer needs to decide channels to focus on / channels to increase bid/budget.
+
+
